@@ -1,0 +1,191 @@
+{
+  "name": "vibesync",
+  "displayName": "VibeSync",
+  "description": "keep the good vibes, rollback the bad ones",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onCommand:vibesync.saveVibe",
+    "onCommand:vibesync.restoreVibe",
+    "onCommand:vibesync.listVibes",
+    "onCommand:vibesync.deleteVibe",
+    "onCommand:vibesync.selectFolder",
+    "onCommand:vibesync.showSidebar",
+    "onCommand:vibesync.noop",
+    "onView:vibesync-states"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vibesync.saveVibe",
+        "title": "Save State",
+        "icon": "$(save)"
+      },
+      {
+        "command": "vibesync.restoreVibe",
+        "title": "Restore State",
+        "icon": "$(history)"
+      },
+      {
+        "command": "vibesync.listVibes",
+        "title": "All States",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "vibesync.deleteVibe",
+        "title": "Delete State",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vibesync.selectFolder",
+        "title": "Select Folder to VibeSync",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "vibesync.showSidebar",
+        "title": "Show States Sidebar",
+        "icon": "$(layout-sidebar-left)"
+      },
+      {
+        "command": "vibesync.noop",
+        "title": "No Operation",
+        "icon": "$(circle)"
+      },
+      {
+        "command": "vibesync.editStateName",
+        "title": "Edit State Name"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vibesync-sidebar",
+          "title": "VibeSync",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vibesync-sidebar": [
+        {
+          "id": "vibesync-states",
+          "name": "Workspace States"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "vibesync.restoreVibe",
+          "when": "view == vibesync-states && viewItem == workspaceState:editableState",
+          "group": "inline@1"
+        },
+        {
+          "command": "vibesync.deleteVibe",
+          "when": "view == vibesync-states && viewItem == workspaceState:editableState",
+          "group": "inline@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vibesync.saveVibe",
+          "when": "view == vibesync-states",
+          "group": "navigation"
+        },
+        {
+          "command": "vibesync.selectFolder",
+          "when": "view == vibesync-states",
+          "group": "navigation"
+        }
+      ],
+      "view/item/vibesync-states": [
+        {
+          "command": "vibesync.editStateName",
+          "when": "viewItem == workspaceState:editableState",
+          "group": "inline"
+        },
+        {
+          "command": "vibesync.restoreVibe",
+          "when": "viewItem == workspaceState",
+          "group": "inline"
+        },
+        {
+          "command": "vibesync.deleteVibe",
+          "when": "viewItem == workspaceState",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VibeSync",
+      "properties": {
+        "vibesync.excludePatterns": {
+          "type": "array",
+          "default": ["node_modules", ".git", "dist", "out", "build"],
+          "description": "Patterns to exclude from states",
+          "items": {
+            "type": "string"
+          }
+        },
+        "vibesync.autoPromptForFolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically prompt to initialize VibeSync when a workspace is opened"
+        },
+        "vibesync.incrementalSnapshotThreshold": {
+          "type": "number",
+          "default": 100,
+          "description": "Size threshold in MB for suggesting incremental states"
+        },
+        "vibesync.incrementalSnapshotFileCountThreshold": {
+          "type": "number",
+          "default": 1000,
+          "description": "File count threshold for suggesting incremental states"
+        },
+        "vibesync.maxRetryAttempts": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum number of retry attempts for failed file operations"
+        },
+        "vibesync.showDetailedProgress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show detailed progress with percentages during state operations"
+        }
+      }
+    },
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/arcanel4bs/vibesync.git"
+    },
+    "scripts": {
+      "vscode:prepublish": "npm run compile",
+      "compile": "tsc -p ./",
+      "watch": "tsc -watch -p ./",
+      "pretest": "npm run compile && npm run lint",
+      "lint": "eslint src",
+      "test": "vscode-test"
+    },
+    "devDependencies": {
+      "@types/fs-extra": "^11.0.4",
+      "@types/mocha": "^10.0.10",
+      "@types/node": "20.x",
+      "@types/vscode": "^1.54.0",
+      "@typescript-eslint/eslint-plugin": "^8.25.0",
+      "@typescript-eslint/parser": "^8.25.0",
+      "@vscode/test-cli": "^0.0.10",
+      "@vscode/test-electron": "^2.4.1",
+      "eslint": "^9.21.0",
+      "typescript": "^5.7.3"
+    },
+    "dependencies": {
+      "fs-extra": "^11.3.0"
+    }
+  }
+}
