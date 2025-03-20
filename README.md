@@ -1,5 +1,4 @@
 # VibeSync
-## Demo
 
 <p align="center">
   <a href="https://youtu.be/uWS3CuDmTpA" target="_blank">
