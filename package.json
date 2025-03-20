@@ -1,6 +1,7 @@
 {
   "name": "vibesync",
   "displayName": "VibeSync",
+  "publisher": "ArcaneL4bs",
   "description": "keep the good vibes, rollback the bad ones",
   "version": "0.0.1",
   "engines": {
