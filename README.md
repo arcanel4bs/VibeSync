@@ -15,7 +15,7 @@
 Made by: [Arcanel4bs](https://arcanel4bs.vercel.app/)
 
 
-VibeSync is a VS Code extension that helps you manage your code state by creating filesystem snapshots as "anchor points" or "snapshots" of the directory of your choice when your code is working well. If something breaks, you can easily roll back to a previous working state.
+VibeSync is a VS Code extension that helps you manage your code by creating filesystem snapshots as "anchor points" or "snapshots" of the directory of your choice when your code is working well to save its state. If something breaks, you can easily respawn to a previous working state.
 
 
 ## Features
