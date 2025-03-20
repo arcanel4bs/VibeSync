@@ -1,6 +1,6 @@
 # VibeSync
 
-![VibeSync Logo](https://github.com/arcanel4bs/vibesync/resources/vibesync_logo.png)
+![VibeSync Logo](./resources/vibesync_logo.png)
 
 by: [Arcanel4bs](https://arcanel4bs.vercel.app/)
 
@@ -9,7 +9,7 @@ VibeSync is a VS Code extension that helps you manage your code state by creatin
 
 ## Features## Demo
 
-[![VibeSync Demo](https://github.com/arcanel4bs/vibesync/resources/VibeSync-Demo.mp4?raw=true)](https://github.com/arcanel4bs/vibesync/resources/VibeSync-Demo.mp4?raw=true)
+![VibeSync Demo](./resources/VibeSync-Demo.mp4)
 
 
 - **Save Snapshots**: Create named, timestamped snapshots of your current workspace
@@ -22,7 +22,7 @@ VibeSync is a VS Code extension that helps you manage your code state by creatin
 - **Batch Processing**: Handles large workspaces with optimized batch restoration for better performance
 - **Force Refresh**: Ensures VS Code fully refreshes all files after restoration
 
-![VibeSync Sidebar](https://github.com/arcanel4bs/vibesync/resources/sidebar-preview.png)
+![VibeSync Sidebar](./resources/sidebar-preview.png)
 
 ## Support
 
