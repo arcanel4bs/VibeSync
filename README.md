@@ -1,14 +1,4 @@
 # VibeSync
-
-<p align="center">
-  <img src="./resources/vibesync_logo.png" alt="VibeSync Logo">
-</p>
-
-by: [Arcanel4bs](https://arcanel4bs.vercel.app/)
-
-
-VibeSync is a VS Code extension that helps you manage your code state by creating filesystem snapshots as "anchor points" or "snapshots" of the directory of your choice when your code is working well. If something breaks, you can easily roll back to a previous working state.
-
 ## Demo
 
 <p align="center">
@@ -20,6 +10,12 @@ VibeSync is a VS Code extension that helps you manage your code state by creatin
 <p align="center">
   <i>Click the image above to watch the demo video</i>
 </p>
+
+
+Made by: [Arcanel4bs](https://arcanel4bs.vercel.app/)
+
+
+VibeSync is a VS Code extension that helps you manage your code state by creating filesystem snapshots as "anchor points" or "snapshots" of the directory of your choice when your code is working well. If something breaks, you can easily roll back to a previous working state.
 
 
 ## Features
