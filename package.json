@@ -6,20 +6,15 @@
   "engines": {
     "vscode": "^1.75.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arcanel4bs/VibeSync.git"
+  },
   "categories": [
     "Other"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [
-    "onCommand:vibesync.saveVibe",
-    "onCommand:vibesync.restoreVibe",
-    "onCommand:vibesync.listVibes",
-    "onCommand:vibesync.deleteVibe",
-    "onCommand:vibesync.selectFolder",
-    "onCommand:vibesync.showSidebar",
-    "onCommand:vibesync.noop",
-    "onView:vibesync-states"
-  ],
+  "activationEvents": [],
   "contributes": {
     "commands": [
       {
@@ -60,6 +55,11 @@
       {
         "command": "vibesync.editStateName",
         "title": "Edit State Name"
+      },
+      {
+        "command": "vibesync.forceRefresh",
+        "title": "Force Refresh Files",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
@@ -125,7 +125,27 @@
     "configuration": {
       "title": "VibeSync",
       "properties": {
-        "vibesync.excludePatterns": {
+        "vibesync.basePath": {
+          "type": "string",
+          "description": "Base directory to store all workspace state snapshots",
+          "default": "${workspaceFolder}/.vibesync"
+        },
+        "vibesync.autoSave": {
+          "type": "boolean",
+          "description": "Automatically save a snapshot before restoring",
+          "default": true
+        },
+        "vibesync.useSlowRestore": {
+          "type": "boolean",
+          "description": "Use the slow batch processing mode for restoring files. This can help with reliability on larger workspaces.",
+          "default": false
+        },
+        "vibesync.maxRetryAttempts": {
+          "type": "number",
+          "description": "Maximum number of retry attempts when copying problematic files during restoration",
+          "default": 3
+        },
+        "vibesync.ignorePatterns": {
           "type": "array",
           "default": ["node_modules", ".git", "dist", "out", "build"],
           "description": "Patterns to exclude from states",
@@ -148,44 +168,35 @@
           "default": 1000,
           "description": "File count threshold for suggesting incremental states"
         },
-        "vibesync.maxRetryAttempts": {
-          "type": "number",
-          "default": 3,
-          "description": "Maximum number of retry attempts for failed file operations"
-        },
         "vibesync.showDetailedProgress": {
           "type": "boolean",
           "default": true,
           "description": "Show detailed progress with percentages during state operations"
         }
       }
-    },
-    "repository": {
-      "type": "git",
-      "url": "https://github.com/arcanel4bs/vibesync.git"
-    },
-    "scripts": {
-      "vscode:prepublish": "npm run compile",
-      "compile": "tsc -p ./",
-      "watch": "tsc -watch -p ./",
-      "pretest": "npm run compile && npm run lint",
-      "lint": "eslint src",
-      "test": "vscode-test"
-    },
-    "devDependencies": {
-      "@types/fs-extra": "^11.0.4",
-      "@types/mocha": "^10.0.10",
-      "@types/node": "20.x",
-      "@types/vscode": "^1.54.0",
-      "@typescript-eslint/eslint-plugin": "^8.25.0",
-      "@typescript-eslint/parser": "^8.25.0",
-      "@vscode/test-cli": "^0.0.10",
-      "@vscode/test-electron": "^2.4.1",
-      "eslint": "^9.21.0",
-      "typescript": "^5.7.3"
-    },
-    "dependencies": {
-      "fs-extra": "^11.3.0"
     }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.54.0",
+    "@typescript-eslint/eslint-plugin": "^8.25.0",
+    "@typescript-eslint/parser": "^8.25.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.21.0",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "fs-extra": "^11.3.0"
   }
 }

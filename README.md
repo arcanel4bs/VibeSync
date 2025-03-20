@@ -1,10 +1,16 @@
 # VibeSync
+
+![VibeSync Logo](https://github.com/arcanel4bs/vibesync/resources/vibesync_logo.png)
+
 by: [Arcanel4bs](https://arcanel4bs.vercel.app/)
 
 
 VibeSync is a VS Code extension that helps you manage your code state by creating filesystem snapshots as "anchor points" or "snapshots" of the directory of your choice when your code is working well. If something breaks, you can easily roll back to a previous working state.
 
-## Features
+## Features## Demo
+
+[![VibeSync Demo](https://github.com/arcanel4bs/vibesync/resources/VibeSync-Demo.mp4?raw=true)](https://github.com/arcanel4bs/vibesync/resources/VibeSync-Demo.mp4?raw=true)
+
 
 - **Save Snapshots**: Create named, timestamped snapshots of your current workspace
 - **Restore Snapshots**: Revert to any previous working state with a single click
@@ -12,8 +18,11 @@ VibeSync is a VS Code extension that helps you manage your code state by creatin
 - **Dedicated Sidebar**: Easily browse and manage your saved snapshots
 - **Automatic Backups**: Auto-backup before restoring to prevent data loss
 - **Smart Filtering**: Excludes node_modules, .git, and other large directories from snapshots
+- **Robust File Handling**: Uses advanced stream-based copying with retry logic for reliable restoration
+- **Batch Processing**: Handles large workspaces with optimized batch restoration for better performance
+- **Force Refresh**: Ensures VS Code fully refreshes all files after restoration
 
-![VibeSync Sidebar](resources/sidebar-preview.png)
+![VibeSync Sidebar](https://github.com/arcanel4bs/vibesync/resources/sidebar-preview.png)
 
 ## Support
 
@@ -21,9 +30,9 @@ VibeSync is a VS Code extension that helps you manage your code state by creatin
 
 ## Why VibeSync?
 
-Ever got your code working perfectly, then made a small change that broke everything? VibeSync lets you:
+Ever got your code working perfectly, then you or a Coding Assistant like Cursor or Windsurf made a change that broke everything? VibeSync lets you:
 
-- Create checkpoints at key development milestones
+- Respawn on a safe state at key development milestones
 - Experiment freely with the safety of easy rollbacks
 - Avoid complex Git operations for local development iterations
 - Demonstrate different stages of a feature to teammates or clients
@@ -43,12 +52,19 @@ Ever got your code working perfectly, then made a small change that broke everyt
 2. Find the snapshot you want to restore
 3. Click the restore icon or right-click and select "Restore"
 4. Confirm the restore operation
+5. After restoration, you can choose to "Reopen Files" or "Force Refresh" to ensure VS Code properly recognizes all file changes
 
 ### Managing Snapshots
 
 - View all snapshots in the dedicated sidebar
 - Delete unwanted snapshots by right-clicking and selecting "Delete"
 - View snapshot details by selecting it from the command palette with **VibeSync: Show All Snapshots**
+
+### Advanced Options
+
+- **Force Refresh**: If VS Code doesn't display the latest file content after restoring a snapshot, use Command Palette and select **VibeSync: Force Refresh Files**
+- **Slow Mode Restoration**: For large workspaces, enable "Slow Mode" restoration in VS Code settings (`vibesync.useSlowRestore`) to process files in batches for improved reliability
+- **Retry Attempts**: Adjust the number of retry attempts for problematic files using the `vibesync.maxRetryAttempts` setting
 
 ## Requirements
 
@@ -76,5 +92,18 @@ This extension contributes the following settings:
 - Metadata and tagging system
 
 ---
+
+# Why not use git?
+Modern problems require modern solutions and while you should definitely use git for version control, VibeSync is the solution for the rapid iteration that occurs when you code with an AI IDE coding assistant like Windsurf or Cursor.
+
+
+# Be aware that large files may take some time to create and restore
+# Some files may not be restored correctly
+# This service is still in experimental stage
+
+## We apreciate your feedback at 
+[Arcanel4bs](https://arcanel4bs.vercel.app/) 
+
+[Twitter](https://twitter.com/labsarcane)
 
 **Enjoy!**

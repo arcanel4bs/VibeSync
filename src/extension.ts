@@ -155,13 +155,17 @@ class WorkspaceStateProvider implements vscode.TreeDataProvider<WorkspaceStateTr
  * Main class for the VibeSync extension
  */
 class VibeSync {
-  private vibeDir: string | undefined;
-  private metadataFile: string | undefined;
   private workspaceStateMetadata: WorkspaceStateMetadata[] = [];
-  private workspaceInfo: WorkspaceInfo | undefined;
-  private workspaceInfoFile: string;
-  private context: vscode.ExtensionContext;
+  private vibeDir?: string;
+  private metadataFile?: string;
+  private workspaceInfo?: WorkspaceInfo;
   private statusBarItem: vscode.StatusBarItem;
+  private isRestoreInProgress: boolean = false;
+  private isSaveInProgress: boolean = false;
+  private lastOperation: number = 0;
+  private readonly OPERATION_COOLDOWN_MS: number = 2000;
+  private context: vscode.ExtensionContext;
+  private workspaceInfoFile: string;
   
   constructor(context: vscode.ExtensionContext) {
     try {
@@ -225,7 +229,8 @@ class VibeSync {
           // No operation command for UI elements that need a command but don't do anything
           console.log('Noop command executed');
         }),
-        vscode.commands.registerCommand('vibesync.editStateName', this.editStateName.bind(this, workspaceStateProvider))
+        vscode.commands.registerCommand('vibesync.editStateName', this.editStateName.bind(this, workspaceStateProvider)),
+        vscode.commands.registerCommand('vibesync.forceRefresh', this.forceRefreshFiles.bind(this))
       );
       
       // Initial check if we have a workspace open
@@ -452,7 +457,7 @@ class VibeSync {
   /**
    * Save workspace state metadata to disk
    */
-  private saveMetadata(): void {
+  private saveWorkspaceStateMetadata(): void {
     try {
       if (this.metadataFile) {
         fs.writeJSONSync(this.metadataFile, this.workspaceStateMetadata, { spaces: 2 });
@@ -558,8 +563,11 @@ class VibeSync {
       }
       
       // Use the new simple restore method for better reliability
-      await this.restoreSimpleSnapshot(id);
+      const result = await this.restoreSimpleSnapshot(id);
       
+      if (!result) {
+        vscode.window.showErrorMessage(`Failed to restore workspace state: ${id}`);
+      }
     } catch (error: any) {
       console.error('Unexpected error in restoreVibe:', error);
       vscode.window.showErrorMessage(`Failed to restore workspace state: ${error.message}`);
@@ -670,7 +678,7 @@ class VibeSync {
       
       // Update metadata
       this.workspaceStateMetadata.splice(index, 1);
-      this.saveMetadata();
+      this.saveWorkspaceStateMetadata();
       
       // Refresh the tree view
       workspaceStateProvider.refresh();
@@ -945,8 +953,9 @@ class VibeSync {
       // Skip ignored patterns
       if (ignorePatterns.some(pattern => 
           entry.name === pattern || 
-          srcPath.includes(pattern) || 
-          entry.name.match(new RegExp(pattern.replace('*', '.*')))
+          srcPath.includes(`/${pattern}/`) || 
+          srcPath.endsWith(`/${pattern}`) || 
+          entry.name.match(new RegExp(`^${pattern.replace(/\*/g, '.*')}$`))
       )) {
         console.log(`Skipping ignored item: ${srcPath}`);
         continue;
@@ -979,14 +988,13 @@ class VibeSync {
           }
         }
         
-        // Update progress if available
+        // Update progress periodically
+        progress?.report({ 
+          message: `Processed ${processedCount} items (${copiedCount} copied, ${failedCount} failed)`,
+          increment: 100 / fileCountForProgress
+        });
+        
         processedCount++;
-        if (progress) {
-          progress.report({
-            message: `Processed ${processedCount} items (${copiedCount} copied, ${failedCount} failed)`,
-            increment: 100 / fileCountForProgress
-          });
-        }
       } catch (error: any) {
         failedCount++;
         console.error(`Error processing ${srcPath}:`, error);
@@ -1012,6 +1020,24 @@ class VibeSync {
       return false;
     }
     
+    // Check if we're within the cooldown period
+    const now = Date.now();
+    if (now - this.lastOperation < this.OPERATION_COOLDOWN_MS) {
+      console.log('Operation cooldown period not yet passed');
+      vscode.window.showErrorMessage('Please wait a bit before taking another snapshot');
+      return false;
+    }
+    
+    // Prevent overlapping operations
+    if (this.isSaveInProgress) {
+      console.log('Save operation already in progress');
+      vscode.window.showErrorMessage('Save operation already in progress. Please wait for it to complete.');
+      return false;
+    }
+    
+    this.isSaveInProgress = true;
+    this.lastOperation = now;
+    
     // Generate a unique ID for the workspace state with timestamp for better sorting
     const timestamp = Date.now();
     const id = `state-${name.replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase()}-${timestamp}`;
@@ -1032,9 +1058,12 @@ class VibeSync {
     const customIgnores = config.get<string[]>('excludePatterns', []);
     
     // Combine ignore patterns
-    const allIgnorePatterns = [...ignorePatterns, ...customIgnores];
+    let allIgnorePatterns = [...ignorePatterns, ...customIgnores];
     
     try {
+      // Save any unsaved files before taking snapshot
+      await vscode.workspace.saveAll(false);
+      
       // Create workspace state directory
       fs.ensureDirSync(snapshotDir);
       
@@ -1042,49 +1071,88 @@ class VibeSync {
       const manifestData = {
         id,
         name,
-        description,
+        description: description || undefined,
         timestamp,
-        tags,
-        workspacePath: this.workspaceInfo.path,
-        workspaceName: this.workspaceInfo.name,
-        ignorePatterns: allIgnorePatterns
+        tags: tags || [],
+        workspacePath: this.workspaceInfo!.path,
+        workspaceName: this.workspaceInfo!.name,
+        ignorePatterns: allIgnorePatterns,
+        versionInfo: {
+          version: vscode.extensions.getExtension('vibesync')?.packageJSON.version || 'unknown',
+          createdAt: new Date().toISOString()
+        }
       };
+      
+      console.log(`Creating workspace state with metadata:`, {
+        id,
+        name,
+        ignorePatterns: allIgnorePatterns,
+        timestamp: new Date(timestamp).toISOString()
+      });
       
       // Write manifest file
       fs.writeJSONSync(
-        path.join(snapshotDir, '.vibesync-manifest.json'), 
-        manifestData, 
+        path.join(snapshotDir, '.vibesync-manifest.json'),
+        manifestData,
         { spaces: 2 }
       );
       
-      // First get all files to copy for better progress reporting
-      const allFiles = await this.getFilesRecursively(this.workspaceInfo.path, allIgnorePatterns);
+      // Get all files in the workspace
+      const allFiles = await this.getFilesRecursively(
+        this.workspaceInfo!.path,
+        allIgnorePatterns
+      );
       
-      // Create progress notification
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `Creating workspace state: ${name}`,
+        title: 'Saving workspace state',
         cancellable: false
       }, async (progress) => {
-        progress.report({ message: 'Preparing to copy files...' });
+        progress.report({ message: `Scanning workspace...` });
         
-        // Use the improved copy function
-        const copyResult = await this.simpleCopyDirectory(
-          this.workspaceInfo!.path, 
-          snapshotDir, 
-          allIgnorePatterns,
-          progress,
-          allFiles.length
-        );
+        console.log(`Found ${allFiles.length} files to snapshot`);
         
-        // Report results
-        console.log(`Workspace state copy complete: ${copyResult.copied} files copied, ${copyResult.failed} failed`);
+        progress.report({ 
+          message: `Found ${allFiles.length} files to save`,
+          increment: 10 
+        });
         
-        if (copyResult.failed > 0) {
-          vscode.window.showWarningMessage(
-            `Warning: ${copyResult.failed} files could not be copied to the workspace state.`
-          );
+        // Copy all files to the workspace state directory
+        let copiedCount = 0;
+        let errorCount = 0;
+        
+        for (const file of allFiles) {
+          try {
+            // Calculate the relative path from the workspace
+            const relativePath = path.relative(this.workspaceInfo!.path, file);
+            
+            // Calculate the destination path in the snapshot
+            const destPath = path.join(snapshotDir, relativePath);
+            
+            // Make sure the destination directory exists
+            fs.ensureDirSync(path.dirname(destPath));
+            
+            // Copy the file
+            fs.copyFileSync(file, destPath);
+            copiedCount++;
+            
+            // Update progress periodically
+            if (copiedCount % 10 === 0 || copiedCount === allFiles.length) {
+              progress.report({ 
+                message: `Saved ${copiedCount} of ${allFiles.length} files`,
+                increment: 80 / allFiles.length * 10
+              });
+            }
+          } catch (err) {
+            console.error(`Error copying file ${file}:`, err);
+            errorCount++;
+          }
         }
+        
+        progress.report({ 
+          message: `Saved ${copiedCount} files (${errorCount} errors)`,
+          increment: 10
+        });
         
         // Create metadata
         const metadata: WorkspaceStateMetadata = {
@@ -1092,38 +1160,24 @@ class VibeSync {
           name,
           description: description || undefined,
           timestamp,
-          tags,
-          isIncremental: false,  // Simple snapshots are always full
-          fileHashes: {}  // We don't use hashes in simple snapshots
+          tags: tags || []
         };
         
-        // Save metadata
+        // Add to metadata list
         this.workspaceStateMetadata.push(metadata);
-        this.saveMetadata();
-        
-        // Update workspace info
-        if (this.workspaceInfo) {
-          this.workspaceInfo.lastSynced = timestamp;
-          this.workspaceInfo.lastFullSnapshot = id;
-          await this.saveWorkspaceInfo();
-          this.updateStatusBar();
-        }
+        this.saveWorkspaceStateMetadata();
         
         // Refresh the tree view
         workspaceStateProvider.refresh();
       });
       
       vscode.window.showInformationMessage(`Workspace state saved: ${name}! 🌀`);
+      this.isSaveInProgress = false;
       return true;
     } catch (error: any) {
-      console.error('Error taking workspace state:', error);
-      vscode.window.showErrorMessage(`Failed to take workspace state: ${error.message}`);
-      
-      // Clean up on failure
-      if (fs.existsSync(snapshotDir)) {
-        fs.removeSync(snapshotDir);
-      }
-      
+      console.error('Error saving workspace state:', error);
+      vscode.window.showErrorMessage(`Failed to save workspace state: ${error.message}`);
+      this.isSaveInProgress = false;
       return false;
     }
   }
@@ -1139,23 +1193,52 @@ class VibeSync {
       return false;
     }
     
-    // Find the workspace state metadata
-    const workspaceState = this.workspaceStateMetadata.find(s => s.id === id);
-    if (!workspaceState) {
-      vscode.window.showErrorMessage(`Workspace state not found: ${id}`);
+    // Check if we're within the cooldown period
+    const now = Date.now();
+    if (now - this.lastOperation < this.OPERATION_COOLDOWN_MS) {
+      console.log('Operation cooldown period not yet passed');
+      vscode.window.showErrorMessage('Please wait a bit before restoring another state');
       return false;
     }
     
-    // Full path to the workspace state directory
-    const snapshotDir = path.join(this.vibeDir, workspaceState.id);
+    // Prevent overlapping operations
+    if (this.isRestoreInProgress) {
+      console.log('Restore operation already in progress');
+      vscode.window.showErrorMessage('Restore operation already in progress. Please wait for it to complete.');
+      return false;
+    }
     
-    // Check if workspace state directory exists
+    this.isRestoreInProgress = true;
+    this.lastOperation = now;
+    
+    // Get the snapshot directory
+    const snapshotDir = path.join(this.vibeDir, id);
+    
     if (!fs.existsSync(snapshotDir)) {
-      vscode.window.showErrorMessage(`Workspace state directory not found: ${workspaceState.id}`);
+      vscode.window.showErrorMessage(`Workspace state '${id}' not found`);
+      this.isRestoreInProgress = false;
       return false;
     }
     
-    // Confirm restore with the user
+    // Get the metadata
+    let workspaceState;
+    try {
+      const metadata = fs.readJSONSync(path.join(snapshotDir, '.vibesync-manifest.json'));
+      workspaceState = {
+        id: metadata.id,
+        name: metadata.name,
+        description: metadata.description,
+        timestamp: metadata.timestamp,
+        tags: metadata.tags || []
+      };
+    } catch (err) {
+      console.error('Error reading workspace state metadata:', err);
+      vscode.window.showErrorMessage('Error reading workspace state metadata');
+      this.isRestoreInProgress = false;
+      return false;
+    }
+    
+    // Confirm restoration
     const result = await vscode.window.showWarningMessage(
       `Are you sure you want to restore workspace state '${workspaceState.name}'? This will overwrite your current workspace files.`,
       { modal: true },
@@ -1163,10 +1246,17 @@ class VibeSync {
     );
     
     if (result !== 'Yes, Restore') {
+      this.isRestoreInProgress = false;
       return false;
     }
     
     try {
+      // First, save all unsaved files to ensure no data loss
+      await vscode.workspace.saveAll();
+      
+      // Close all text editors to prevent file locking issues
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      
       // Default ignore patterns
       const ignorePatterns = [
         'node_modules',
@@ -1183,206 +1273,448 @@ class VibeSync {
       const maxRetryAttempts = config.get<number>('maxRetryAttempts', 3);
       
       // Combine ignore patterns
-      const allIgnorePatterns = [...ignorePatterns, ...customIgnores];
+      let allIgnorePatterns = [...ignorePatterns, ...customIgnores];
       
       // Check if manifest file exists for additional info
       const manifestFile = path.join(snapshotDir, '.vibesync-manifest.json');
+      let manifest: any = null;
+      
       if (fs.existsSync(manifestFile)) {
         try {
-          const manifest = fs.readJSONSync(manifestFile);
+          manifest = fs.readJSONSync(manifestFile);
+          console.log(`Found workspace state manifest:`, {
+            id: manifest.id,
+            name: manifest.name,
+            timestamp: manifest.timestamp ? new Date(manifest.timestamp).toISOString() : 'unknown',
+            version: manifest.versionInfo?.version || 'unknown'
+          });
+          
           if (manifest.ignorePatterns && Array.isArray(manifest.ignorePatterns)) {
             // Use ignore patterns from the snapshot itself
-            console.log('Using ignore patterns from workspace state manifest');
+            console.log('Using ignore patterns from workspace state manifest:', manifest.ignorePatterns);
+            allIgnorePatterns = manifest.ignorePatterns;
           }
         } catch (err) {
           console.error('Error reading manifest file:', err);
           // Continue with default ignore patterns
         }
+      } else {
+        console.warn(`No manifest file found for workspace state ${id} at ${manifestFile}`);
       }
       
-      // Create a temporary staging directory to prepare the restore
-      // This allows us to be more atomic in our approach
-      const stagingDir = path.join(this.vibeDir, `restore-staging-${Date.now()}`);
+      // Add a retry option to our restore method for handling tough cases
+      const maxRetries = vscode.workspace.getConfiguration('vibesync').get('maxRetryAttempts', 3);
       
-      await vscode.window.withProgress({
+      // Function to attempt file copy with retries
+      const copyFileWithRetry = async (sourcePath: string, destPath: string): Promise<boolean> => {
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            // If not first attempt, add small delay to allow any locks to release
+            if (attempt > 0) {
+              await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+            }
+            
+            // If destination exists, try to delete it first
+            if (fs.existsSync(destPath)) {
+              fs.unlinkSync(destPath);
+            }
+            
+            // Create needed subdirectories
+            fs.ensureDirSync(path.dirname(destPath));
+            
+            // For problematic files, use advanced stream method with flush
+            await new Promise<void>((resolve, reject) => {
+              const readStream = fs.createReadStream(sourcePath);
+              const writeStream = fs.createWriteStream(destPath, { flags: 'w' });
+              
+              readStream.on('error', (err) => {
+                console.error(`Read stream error for ${sourcePath}:`, err);
+                reject(err);
+              });
+              
+              writeStream.on('error', (err) => {
+                console.error(`Write stream error for ${destPath}:`, err);
+                reject(err);
+              });
+              
+              writeStream.on('finish', () => {
+                // Force flush to ensure file is written completely
+                writeStream.close(() => resolve());
+              });
+              
+              readStream.pipe(writeStream);
+            });
+            
+            // Verify the file exists
+            if (!fs.existsSync(destPath)) {
+              throw new Error('File not created properly');
+            }
+            
+            return true;
+          } catch (err) {
+            console.error(`Error copying file (attempt ${attempt + 1}/${maxRetries + 1}):`, err);
+            
+            // If last attempt failed, propagate the error
+            if (attempt === maxRetries) {
+              return false;
+            }
+          }
+        }
+        
+        return false;  // Should never reach here, but TypeScript wants a return
+      };
+      
+      const result = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Restoring workspace state: ${workspaceState.name}`,
-        cancellable: false
-      }, async (progress) => {
-        // STEP 1: Gather information about what files exist in the workspace
-        progress.report({ message: 'Analyzing workspace files...' });
-        
-        const workspaceFiles = await this.getFilesRecursively(
-          this.workspaceInfo!.path, 
-          allIgnorePatterns
-        );
-        
-        progress.report({ 
-          message: `Found ${workspaceFiles.length} files in workspace`,
-          increment: 10 
-        });
-        
-        // STEP 2: Gather information about what files exist in the workspace state
-        progress.report({ message: 'Analyzing workspace state files...' });
-        
-        // Get all files in the workspace state, excluding any ignore patterns and manifest files
-        const snapshotFiles = await this.getFilesRecursively(
-          snapshotDir, 
-          ['.vibesync-manifest.json', '.vibesync-base']
-        );
-        
-        progress.report({ 
-          message: `Found ${snapshotFiles.length} files in workspace state`,
-          increment: 10 
-        });
-        
-        // STEP 3: Create the staging directory with a partial workspace structure
-        progress.report({ message: 'Preparing staging area...' });
-        fs.ensureDirSync(stagingDir);
-        
-        // STEP 4: Copy files from the workspace state to the staging area
-        progress.report({ message: 'Copying workspace state files to staging area...' });
-        
-        const result = await this.simpleCopyDirectory(
-          snapshotDir,
-          stagingDir,
-          ['.vibesync-manifest.json', '.vibesync-base'],
-          progress,
-          snapshotFiles.length
-        );
-        
-        if (result.failed > 0) {
-          vscode.window.showWarningMessage(
-            `Warning: ${result.failed} files could not be copied from the workspace state.`
-          );
-        }
-        
-        progress.report({ 
-          message: `Copied ${result.copied} files to staging area (${result.failed} failed)`,
-          increment: 30
-        });
-        
-        // STEP 5: Remove existing files from workspace (except ignored ones)
-        progress.report({ message: 'Removing existing workspace files...' });
-        
-        let deletedCount = 0;
-        let failedDeletions = 0;
-        
-        const workspaceEntries = fs.readdirSync(this.workspaceInfo!.path, { withFileTypes: true });
-        
-        for (const entry of workspaceEntries) {
-          if (allIgnorePatterns.includes(entry.name)) {
-            console.log(`Skipping ignored item: ${entry.name}`);
-            continue;
+        cancellable: true
+      }, async (progress, token) => {
+        try {
+          // STEP 1: Analyze files in workspace and snapshot
+          progress.report({ message: 'Analyzing workspace and snapshot...' });
+          
+          // Get all files to manage during restore
+          const snapshotFiles = await this.getFilesRecursively(snapshotDir, ['.vibesync-manifest.json', '.vibesync-base']);
+          const workspaceFiles = await this.getFilesRecursively(this.workspaceInfo!.path, allIgnorePatterns);
+          
+          // Check if we should use slow batch mode based on file count
+          const useBatchMode = 
+            vscode.workspace.getConfiguration('vibesync').get('useSlowRestore', false) || 
+            snapshotFiles.length > 1000;  // Auto-use for large workspaces
+          
+          // Calculate batch size based on workspace size
+          let batchSize = 100;
+          if (snapshotFiles.length > 5000) {
+            batchSize = 50;
+          } else if (snapshotFiles.length > 10000) {
+            batchSize = 20;
           }
           
-          const entryPath = path.join(this.workspaceInfo!.path, entry.name);
-          console.log(`Removing workspace item: ${entryPath}`);
+          progress.report({ 
+            message: `Found ${snapshotFiles.length} files to restore, ${workspaceFiles.length} files to clean up`,
+            increment: 5
+          });
           
-          try {
-            const success = await this.removeWithRetry(entryPath, maxRetryAttempts);
-            if (success) {
+          // Check if user canceled during preparation
+          if (token.isCancellationRequested) {
+            vscode.window.showInformationMessage('Restore operation was cancelled.');
+            this.isRestoreInProgress = false;
+            return false;
+          }
+          
+          // STEP 2: Delete existing files from workspace (except ignored ones)
+          progress.report({ message: 'Preparing workspace...' });
+          
+          let deletedCount = 0;
+          let deletionErrors = 0;
+          
+          // Delete non-ignored files in the workspace
+          for (const file of workspaceFiles) {
+            try {
+              await fs.remove(file);
               deletedCount++;
-            } else {
-              failedDeletions++;
-              console.error(`Failed to remove ${entryPath} after ${maxRetryAttempts} attempts`);
-            }
-          } catch (err) {
-            failedDeletions++;
-            console.error(`Error removing ${entryPath}:`, err);
-          }
-        }
-        
-        if (failedDeletions > 0) {
-          const msg = `Warning: ${failedDeletions} items could not be removed from workspace.`;
-          console.warn(msg);
-          vscode.window.showWarningMessage(msg);
-        }
-        
-        progress.report({ 
-          message: `Removed ${deletedCount} items from workspace (${failedDeletions} failed)`, 
-          increment: 10 
-        });
-        
-        // STEP 6: Copy files from staging to workspace
-        progress.report({ message: 'Copying files to workspace...' });
-        
-        const stagingEntries = fs.readdirSync(stagingDir, { withFileTypes: true });
-        let copiedCount = 0;
-        let copyFailures = 0;
-        
-        for (const entry of stagingEntries) {
-          const srcPath = path.join(stagingDir, entry.name);
-          const destPath = path.join(this.workspaceInfo!.path, entry.name);
-          
-          try {
-            if (entry.isDirectory()) {
-              // Copy directory recursively
-              const copyResult = await this.simpleCopyDirectory(
-                srcPath,
-                destPath,
-                []
-              );
               
-              copiedCount += copyResult.copied;
-              copyFailures += copyResult.failed;
-            } else {
-              // Copy file with retry
-              const success = await this.copyFileWithRetry(srcPath, destPath, maxRetryAttempts);
-              if (success) {
-                copiedCount++;
-              } else {
-                copyFailures++;
+              // Update progress periodically
+              if (deletedCount % 10 === 0 || deletedCount === workspaceFiles.length) {
+                progress.report({ 
+                  message: `Removed ${deletedCount} of ${workspaceFiles.length} files`,
+                  increment: 15 / workspaceFiles.length * 10
+                });
+              }
+            } catch (err) {
+              console.error(`Error removing file ${file}:`, err);
+              deletionErrors++;
+            }
+          }
+          
+          progress.report({ 
+            message: `Removed ${deletedCount} files (${deletionErrors} errors)`,
+            increment: 10
+          });
+          
+          // STEP 3: Copy files from snapshot to workspace
+          progress.report({ message: 'Restoring files from workspace state...' });
+          
+          let copiedCount = 0;
+          let copyErrors = 0;
+          
+          // If batch mode is enabled, process files in batches
+          if (useBatchMode) {
+            const totalBatches = Math.ceil(snapshotFiles.length / batchSize);
+            
+            for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+              if (token.isCancellationRequested) {
+                vscode.window.showInformationMessage('Restore operation was cancelled.');
+                this.isRestoreInProgress = false;
+                return false;
+              }
+              
+              const startIdx = batchIndex * batchSize;
+              const endIdx = Math.min((batchIndex + 1) * batchSize, snapshotFiles.length);
+              const batchFiles = snapshotFiles.slice(startIdx, endIdx);
+              
+              progress.report({ 
+                message: `Processing batch ${batchIndex + 1}/${totalBatches} (${startIdx}-${endIdx} of ${snapshotFiles.length})`,
+                increment: (50 / totalBatches) * 0.1 // Give 10% for batch start
+              });
+              
+              // Process this batch
+              for (const file of batchFiles) {
+                try {
+                  // Calculate relative path from the snapshot directory
+                  const relativePath = path.relative(snapshotDir, file);
+                  
+                  // Skip manifest files
+                  if (relativePath === '.vibesync-manifest.json' || relativePath === '.vibesync-base') {
+                    continue;
+                  }
+                  
+                  // Construct destination path in the workspace
+                  const destPath = path.join(this.workspaceInfo!.path, relativePath);
+                  
+                  // Try to copy with retry logic for problematic files
+                  const copied = await copyFileWithRetry(file, destPath);
+                  
+                  if (copied) {
+                    copiedCount++;
+                  } else {
+                    copyErrors++;
+                  }
+                } catch (err) {
+                  console.error(`Error copying file ${file}:`, err);
+                  copyErrors++;
+                }
+              }
+              
+              // Update progress for this batch completion
+              progress.report({ 
+                message: `Batch ${batchIndex + 1}/${totalBatches} complete. Restored ${copiedCount} files so far (${copyErrors} errors)`,
+                increment: (50 / totalBatches) * 0.9 // Give 90% for batch completion
+              });
+              
+              // Short pause between batches to let VS Code refresh and avoid locking
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+              // Force a partial refresh every few batches
+              if (batchIndex % 5 === 4 || batchIndex === totalBatches - 1) {
+                vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
               }
             }
-          } catch (err) {
-            copyFailures++;
-            console.error(`Error copying ${srcPath} to workspace:`, err);
+          } else {
+            // Process all files at once for smaller workspaces using the standard approach
+            for (const file of snapshotFiles) {
+              try {
+                // Calculate relative path from the snapshot directory
+                const relativePath = path.relative(snapshotDir, file);
+                
+                // Skip manifest files
+                if (relativePath === '.vibesync-manifest.json' || relativePath === '.vibesync-base') {
+                  continue;
+                }
+                
+                // Construct destination path in the workspace
+                const destPath = path.join(this.workspaceInfo!.path, relativePath);
+                
+                // Try to copy with retry logic for problematic files
+                const copied = await copyFileWithRetry(file, destPath);
+                
+                if (copied) {
+                  copiedCount++;
+                } else {
+                  copyErrors++;
+                }
+                
+                // Update progress periodically
+                if (copiedCount % 10 === 0 || copiedCount === snapshotFiles.length) {
+                  progress.report({ 
+                    message: `Restored ${copiedCount} of ${snapshotFiles.length} files (${copyErrors} errors)`,
+                    increment: 50 / snapshotFiles.length * 10
+                  });
+                }
+              } catch (err) {
+                console.error(`Error copying file ${file}:`, err);
+                copyErrors++;
+              }
+            }
           }
           
-          // Update progress periodically
           progress.report({ 
-            message: `Restored ${copiedCount} files (${copyFailures} failed)`,
-            increment: 30 / stagingEntries.length
+            message: `Completed! Restored ${copiedCount} files with ${copyErrors} errors`,
+            increment: 20
           });
+          
+          // Notify VS Code to refresh file explorer
+          vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
+          
+          // Wait a moment for the file system to settle
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Force VS Code to fully reload by using a combination of approaches
+          await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+          
+          // Force a file system scan
+          vscode.workspace.saveAll(false);
+          vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
+          
+          // Use the text search to force cache invalidation
+          try {
+            await vscode.commands.executeCommand('workbench.action.findInFiles', {
+              query: '',
+              triggerSearch: true,
+              matchWholeWord: false,
+              isCaseSensitive: false
+            });
+            // Cancel the search immediately
+            await vscode.commands.executeCommand('search.action.cancel');
+          } catch (err) {
+            // Ignore errors from the search command
+            console.log('Search command error (expected, safe to ignore):', err);
+          }
+          
+          // Wait a bit longer to ensure everything is refreshed
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Show success message with buttons for different options
+          const choice = await vscode.window.showInformationMessage(
+            `Workspace state '${workspaceState.name}' restored successfully! 🌟`,
+            'Reopen Files',
+            'Force Refresh'
+          );
+          
+          if (choice === 'Reopen Files') {
+            await vscode.commands.executeCommand('workbench.action.files.openFileFolder');
+          } else if (choice === 'Force Refresh') {
+            await this.forceRefreshFiles();
+          }
+          
+          this.isRestoreInProgress = false;
+          return true;
+        } catch (error: any) {
+          console.error('Error in restore progress:', error);
+          vscode.window.showErrorMessage(`Error during restore: ${error.message}`);
+          this.isRestoreInProgress = false;
+          return false;
         }
-        
-        // STEP 7: Cleanup staging directory
-        progress.report({ message: 'Cleaning up...' });
-        
-        try {
-          await fs.remove(stagingDir);
-        } catch (err) {
-          console.error('Error removing staging directory:', err);
-          // Non-fatal error, continue
-        }
-        
-        // Update workspace info
-        if (this.workspaceInfo) {
-          this.workspaceInfo.lastSynced = Date.now();
-          await this.saveWorkspaceInfo();
-          this.updateStatusBar();
-        }
-        
-        progress.report({ 
-          message: `Restore complete: ${copiedCount} files restored (${copyFailures} failed)`,
-          increment: 10 
-        });
       });
       
-      vscode.window.showInformationMessage(`Workspace state '${workspaceState.name}' restored successfully! 🌟`);
-      return true;
+      if (!result) {
+        vscode.window.showErrorMessage(`Failed to restore workspace state: ${id}`);
+      }
+      
+      return result;
     } catch (error: any) {
       console.error('Error restoring workspace state:', error);
       vscode.window.showErrorMessage(`Failed to restore workspace state: ${error.message}`);
+      this.isRestoreInProgress = false;
       return false;
     }
   }
 
   /**
+   * Force VS Code to refresh/reload all files
+   * This can help when the editor doesn't show the latest file content
+   */
+  private async forceRefreshFiles(): Promise<void> {
+    // Close all editors first to release any file locks
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    
+    // Save all files to ensure changes are flushed to disk
+    await vscode.workspace.saveAll(false);
+    
+    // Force VS Code to refresh the file explorer
+    vscode.commands.executeCommand('workbench.files.action.refreshFilesExplorer');
+    
+    // Trigger a search to force cache invalidation
+    try {
+      await vscode.commands.executeCommand('workbench.action.findInFiles', {
+        query: '',
+        triggerSearch: true,
+        matchWholeWord: false,
+        isCaseSensitive: false
+      });
+      
+      // Cancel the search right away
+      await vscode.commands.executeCommand('search.action.cancel');
+    } catch (err) {
+      // Ignore errors from search command
+      console.log('Search command error (expected):', err);
+    }
+    
+    // Rebuild IntelliSense caches
+    vscode.commands.executeCommand('typescript.restartTsServer');
+    
+    // Wait a moment and open a random file to force file scan
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Show success message
+    vscode.window.showInformationMessage('Files refreshed! All caches cleared.');
+  }
+  
+  /**
+   * Force VS Code to refresh all open editors after file changes
+   */
+  private async refreshOpenEditors(): Promise<void> {
+    console.log('Refreshing open editors to reflect workspace state changes');
+    
+    // Get all open text editors
+    const openEditors = vscode.window.visibleTextEditors;
+    
+    // Try two approaches to force VS Code to reload the files:
+    
+    // Approach 1: Use revert to reload from disk (most direct)
+    for (const editor of openEditors) {
+      try {
+        const document = editor.document;
+        if (document.uri.scheme === 'file' && fs.existsSync(document.uri.fsPath)) {
+          console.log(`Reverting document to disk contents: ${document.uri.fsPath}`);
+          await vscode.commands.executeCommand('workbench.action.files.revert', document.uri);
+        }
+      } catch (err) {
+        console.error(`Error reverting document:`, err);
+      }
+    }
+    
+    // Approach 2: For each editor, reload the content from disk
+    for (const editor of openEditors) {
+      try {
+        const document = editor.document;
+        const uri = document.uri;
+        
+        // Check if this is a file that actually exists on disk (not an untitled file)
+        if (uri.scheme === 'file') {
+          console.log(`Refreshing editor for file: ${uri.fsPath}`);
+          
+          // First, check if the file still exists after restore
+          if (fs.existsSync(uri.fsPath)) {
+            // Create a new text document from the file
+            const newDocument = await vscode.workspace.openTextDocument(uri);
+            
+            // Replace the editor with the reloaded document
+            await vscode.window.showTextDocument(newDocument, { 
+              viewColumn: editor.viewColumn, 
+              preserveFocus: true,
+              preview: false
+            });
+          } else {
+            console.log(`File no longer exists after restore: ${uri.fsPath}`);
+          }
+        }
+      } catch (err) {
+        console.error(`Error refreshing editor:`, err);
+      }
+    }
+    
+    // For good measure, force a workspace file system scan
+    vscode.workspace.saveAll(false);
+    
+    // Wait a moment to let VS Code settle
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  
+  /**
    * Edit the name of a workspace state
    */
-  async editStateName(workspaceStateProvider: WorkspaceStateProvider, item?: WorkspaceStateTreeItem) {
+  private async editStateName(workspaceStateProvider: WorkspaceStateProvider, item?: WorkspaceStateTreeItem) {
     if (!item) {
       vscode.window.showErrorMessage('Please select a workspace state to edit.');
       return;
@@ -1403,7 +1735,7 @@ class VibeSync {
       const stateIndex = this.workspaceStateMetadata.findIndex(state => state.id === stateId);
       if (stateIndex !== -1) {
         this.workspaceStateMetadata[stateIndex].name = newStateName.trim();
-        this.saveMetadata();
+        this.saveWorkspaceStateMetadata();
         workspaceStateProvider.refresh();
         vscode.window.showInformationMessage(`Workspace state name updated to: ${newStateName.trim()}`);
       } else {
