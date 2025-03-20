@@ -108,9 +108,9 @@ This extension contributes the following settings:
 Modern problems require modern solutions and while you should definitely use git for version control, VibeSync is the solution for the rapid iteration that occurs when you code with an AI IDE coding assistant like Windsurf or Cursor.
 
 
-# Be aware that large files may take some time to create and restore
-# Some files may not be restored correctly
-# This service is still in experimental stage
+Be aware that large files may take some time to create and restore
+Some files may not be restored correctly
+This service is still in experimental stage
 
 ## We apreciate your feedback at 
 [Arcanel4bs](https://arcanel4bs.vercel.app/) 
