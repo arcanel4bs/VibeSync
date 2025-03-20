@@ -12,14 +12,15 @@ VibeSync is a VS Code extension that helps you manage your code state by creatin
 ## Demo
 
 <p align="center">
-  <a href="./resources/VibeSync-Demo.mp4">
+  <a href="https://youtu.be/uWS3CuDmTpA" target="_blank">
     <img src="./resources/vibesync_logo.png" alt="VibeSync Demo" width="400">
   </a>
 </p>
 
 <p align="center">
-  <i>Click the image above to download and view the demo video</i>
+  <i>Click the image above to watch the demo video</i>
 </p>
+
 
 ## Features
 
